@@ -1,0 +1,9 @@
+{
+  "name": "nie-tts-distill",
+  "private": true,
+  "type": "module",
+  "description": "Kokoro → Piper 蒸馏：中文拼音音素 ID（训练标签与网页朗读共用）",
+  "dependencies": {
+    "pinyin-pro": "3.29.4"
+  }
+}
