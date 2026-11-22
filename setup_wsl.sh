@@ -31,7 +31,7 @@ echo "== 3/6 合成与质检环境 .venv-synth（Kokoro + Whisper）"
 "$HERE/.venv-synth/bin/pip" install -q -U pip
 "$HERE/.venv-synth/bin/pip" install -q torch --index-url "$TORCH_INDEX"
 "$HERE/.venv-synth/bin/pip" install -q "kokoro==0.9.4" "misaki[en,zh]==0.9.4" soundfile \
-  "faster-whisper==1.2.1" "num2words==0.5.14" pypinyin
+  "faster-whisper==1.2.1" "av<14" "num2words==0.5.14" pypinyin
 (cd "$HERE" && npm install --no-audit --no-fund --silent)
 
 echo "== 4/6 训练环境 .venv-piper（piper1-gpl 固定提交 ${PIPER_COMMIT:0:7}）"
@@ -41,17 +41,21 @@ git -C "$WORK/piper1-gpl" fetch -q origin "$PIPER_COMMIT" 2>/dev/null || git -C 
 git -C "$WORK/piper1-gpl" checkout -q "$PIPER_COMMIT"
 [ -x "$HERE/.venv-piper/bin/python" ] || python3 -m venv "$HERE/.venv-piper"
 "$HERE/.venv-piper/bin/pip" install -q -U pip
-"$HERE/.venv-piper/bin/pip" install -q torch --index-url "$TORCH_INDEX"
+"$HERE/.venv-piper/bin/pip" install -q torch torchaudio --index-url "$TORCH_INDEX"
 "$HERE/.venv-piper/bin/pip" install -q -e "$WORK/piper1-gpl[train]"
-"$HERE/.venv-piper/bin/pip" install -q "faster-whisper==1.2.1" "num2words==0.5.14" pypinyin soundfile
+"$HERE/.venv-piper/bin/pip" install -q "faster-whisper==1.2.1" "av<14" "num2words==0.5.14" pypinyin soundfile "scikit-build<1" cmake ninja onnxscript
+find "$HERE/.venv-synth/lib" -type d -path "*/nvidia/*/lib" | sudo tee /etc/ld.so.conf.d/tts-distill.conf >/dev/null && sudo ldconfig
 (cd "$WORK/piper1-gpl" && source "$HERE/.venv-piper/bin/activate" \
-  && ./build_monotonic_align.sh && python3 setup.py build_ext --inplace >/dev/null)
+  && ./build_monotonic_align.sh && python3 setup.py build_ext --inplace >/dev/null \
+  && sed -i 's/opset_version=OPSET_VERSION,/opset_version=OPSET_VERSION, dynamo=False,/' src/piper/train/export_onnx.py)
 
 echo "== 5/6 下载底模（各约 850MB）"
 mkdir -p "$WORK/base"
 BASE="https://huggingface.co/datasets/rhasspy/piper-checkpoints/resolve/$CKPT_REV"
 [ -s "$WORK/base/lj-med_1000.ckpt" ] || \
   curl -L --fail -o "$WORK/base/lj-med_1000.ckpt" "$BASE/en/en_US/ljspeech/medium/lj-med_1000.ckpt"
+[ -s "$WORK/base/vctk-medium.ckpt" ] || \
+  curl -L --fail -o "$WORK/base/vctk-medium.ckpt" "$BASE/en/en_GB/vctk/medium/epoch%3D545-step%3D1511328.ckpt"
 [ -s "$WORK/base/chaowen-medium.ckpt" ] || \
   curl -L --fail -o "$WORK/base/chaowen-medium.ckpt" "$BASE/zh/zh_CN/chaowen/medium/epoch%3D1999-step%3D88000.ckpt"
 

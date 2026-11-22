@@ -1,5 +1,6 @@
 # 训练机上生成的东西都很大，不进 git
 work/
+models/*.onnx
 .venv-synth/
 .venv-piper/
 node_modules/
