@@ -19,6 +19,11 @@ FILES=(
 )
 
 for f in "${FILES[@]}"; do
+  # *.onnx.json 已随 Git 仓库一起更新；仅在本地缺失时才回退从 Release 拉取，避免旧 Release 覆盖新配置
+  if [[ "$f" == *.onnx.json && -s "$OUT/$f" ]]; then
+    echo ">>> 保留仓库内最新的 $f"
+    continue
+  fi
   echo ">>> 下载 $f ..."
   curl -fL --retry 3 --progress-bar -o "$OUT/$f" "$BASE_URL/$f"
 done

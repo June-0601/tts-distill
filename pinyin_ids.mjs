@@ -19,10 +19,62 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pinyin } from 'pinyin-pro';
+import { customPinyin, pinyin } from 'pinyin-pro';
+import { normalizeZhPunctuation, splitZhClauses } from './zh_tts_runtime.mjs';
+
+export { normalizeZhPunctuation, splitZhClauses };
 
 // 与网页 predictXiao 现用的选项相同（toneSandhi 处理「一」「不」变调）。
 export const PINYIN_OPTIONS = { type: 'all', toneType: 'none', v: true, toneSandhi: true };
+
+let _customPinyinReady = false;
+// 高频上下文多音字与轻声词纠偏（pinyin-pro 词典补丁：必须使用带声调拼音字母以保留 p.num 解析）
+const POLYPHONE_OVERRIDES = {
+  还给: 'huán gěi',
+  还他: 'huán tā',
+  还她: 'huán tā',
+  还我: 'huán wǒ',
+  还您: 'huán nín',
+  还钱: 'huán qián',
+  还书: 'huán shū',
+  归还: 'guī huán',
+  偿还: 'cháng huán',
+  退还: 'tuì huán',
+  第一行: 'dì yī háng',
+  第二行: 'dì èr háng',
+  第三行: 'dì sān háng',
+  上一行: 'shàng yī háng',
+  下一行: 'xià yī háng',
+  换了行: 'huàn le háng',
+  换行: 'huàn háng',
+  一行字: 'yī háng zì',
+  数一数: 'shǔ yi shǔ',
+  数不清: 'shǔ bù qīng',
+  数得着: 'shǔ de zháo',
+  干什么: 'gàn shén me',
+  干嘛: 'gàn má',
+  干坏事: 'gàn huài shì',
+  慢慢地: 'màn màn de',
+  渐渐地: 'jiàn jiàn de',
+  轻轻地: 'qīng qīng de',
+  悄悄地: 'qiāo qiāo de',
+  静静地: 'jìng jìng de',
+  仔细地: 'zǐ xì de',
+  认真地: 'rèn zhēn de',
+  不断地: 'bù duàn de',
+  不停地: 'bù tíng de',
+  高兴地: 'gāo xìng de',
+  迅速地: 'xùn sù de',
+  拼命地: 'pīn mìng de',
+};
+
+export function ensureCustomPinyin() {
+  if (_customPinyinReady) return;
+  _customPinyinReady = true;
+  if (typeof customPinyin === 'function') {
+    customPinyin(POLYPHONE_OVERRIDES);
+  }
+}
 
 const INITIALS = ['zh', 'ch', 'sh', 'b', 'p', 'm', 'f', 'd', 't', 'n', 'l', 'g', 'k', 'h',
   'j', 'q', 'x', 'r', 'z', 'c', 's', 'y', 'w'];
@@ -290,22 +342,45 @@ function intToEn(n) {
   return String(n).split('').map(d => EN_ONES[+d]).join(' ');
 }
 
-/** 将文本中的阿拉伯数字按语境转为中文数字或英文单词。 */
+function zhNumStr(numStr) {
+  if (numStr.includes('.')) {
+    const [a, b] = numStr.split('.');
+    return intToZh(+a) + '点' + b.split('').map(d => ZH_DIGITS[+d]).join('');
+  }
+  return numStr.length > 8 ? numStr.split('').map(d => ZH_DIGITS[+d]).join('') : intToZh(+numStr);
+}
+
+/** 将文本中的阿拉伯数字、温度、百分数、分数、负号按语境转为中文数字或英文单词。 */
 export function normalizeNumbers(text) {
-  const hasZh = /[一-鿿]/.test(text);
+  const s = String(text || '');
+  const hasZh = /[一-鿿°℃％%]/.test(s);
   if (hasZh) {
-    // 年份如 1998年 -> 一九九八年
-    let res = text.replace(/\b(\d{4})(?=\s*年)/g, (_, y) => y.split('').map(d => ZH_DIGITS[+d]).join(''));
-    res = res.replace(/\d+(\.\d+)?/g, m => {
-      if (m.includes('.')) {
-        const [a, b] = m.split('.');
-        return intToZh(+a) + '点' + b.split('').map(d => ZH_DIGITS[+d]).join('');
-      }
-      return m.length > 8 ? m.split('').map(d => ZH_DIGITS[+d]).join('') : intToZh(+m);
+    // 0) 日期格式 YYYY-MM-DD / YYYY/MM/DD -> 二〇二六年十一月二十二日
+    let res = s.replace(/\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b/g, (_, y, mo, d) => {
+      const yZh = y.split('').map(c => ZH_DIGITS[+c]).join('');
+      return `${yZh}年${intToZh(+mo)}月${intToZh(+d)}日`;
     });
+    // 1) 温度：-5°C / 26℃ -> 零下五摄氏度 / 二十六摄氏度
+    res = res.replace(/([-−])?(\d+(?:\.\d+)?)\s*(?:°\s*([CcFf])|([℃℉]))/g, (_, sign, num, degUnit, symUnit) => {
+      const unit = ((degUnit || '').toUpperCase() === 'F' || symUnit === '℉') ? '华氏度' : '摄氏度';
+      return (sign ? '零下' : '') + zhNumStr(num) + unit;
+    });
+    // 2) 百分数：85% / -12.5％ -> 百分之八十五 / 负百分之十二点五
+    res = res.replace(/([-−])?(\d+(?:\.\d+)?)\s*[%％]/g, (_, sign, num) => {
+      return (sign ? '负' : '') + '百分之' + zhNumStr(num);
+    });
+    // 3) 中文上下文常见分数（避开 URL/日期格式 2026/11/22）：1/3 -> 三分之一
+    res = res.replace(/(?<![A-Za-z0-9./\-])(\d+)\s*\/\s*(\d+)(?![A-Za-z0-9./\-])/g, (_, num, den) => {
+      return `${zhNumStr(den)}分之${zhNumStr(num)}`;
+    });
+    // 4) 年份：1998年 -> 一九九八年
+    res = res.replace(/\b(\d{4})(?=\s*年)/g, (_, y) => y.split('').map(d => ZH_DIGITS[+d]).join(''));
+    // 5) 负数与常规整数/小数
+    res = res.replace(/(?<![A-Za-z0-9.])([-−])(\d+(?:\.\d+)?)/g, (_, _sign, num) => '负' + zhNumStr(num));
+    res = res.replace(/\d+(\.\d+)?/g, m => zhNumStr(m));
     return res;
   }
-  return text.replace(/\d+(\.\d+)?/g, m => {
+  return s.replace(/\d+(\.\d+)?/g, m => {
     if (m.includes('.')) {
       const [a, b] = m.split('.');
       return intToEn(+a) + ' point ' + b.split('').map(d => EN_ONES[+d]).join(' ');
@@ -326,7 +401,9 @@ export function splitSyllable(syl) {
 
 /** 文本 → 音素列表；支持纯中文、中英混排、纯英文。bad 收集无法拆分的汉字或无法识别的英文词。 */
 export function pinyinTokens(rawText, pinyinFn = pinyin, options = PINYIN_OPTIONS, customEnDict = null) {
-  const text = normalizeNumbers(String(rawText || ''));
+  if (pinyinFn === pinyin) ensureCustomPinyin();
+  const punctNorm = normalizeZhPunctuation(rawText, { keepDunhao: Boolean(options?.keepDunhao) });
+  const text = normalizeNumbers(punctNorm);
   const tokens = [];
   const bad = [];
   let prevKind = null; // 'zh' | 'en' | 'punct'
@@ -335,6 +412,8 @@ export function pinyinTokens(rawText, pinyinFn = pinyin, options = PINYIN_OPTION
   const flushPunct = slice => {
     for (const ch of slice) {
       if (PUNCT.has(ch)) {
+        // 避免连续输出两个停顿标点（例如句子结尾双标点）
+        if (prevKind === 'punct' && tokens.length && PUNCT.has(tokens[tokens.length - 1])) continue;
         tokens.push(ch);
         prevKind = 'punct';
       }
@@ -401,6 +480,7 @@ export function tokensToIds(tokens, map = PHONEME_TO_ID) {
 
 /** 不做变调的逐字拼音（带调号，轻声 5），用来和 Kokoro 的中文注音逐字比对。 */
 export function plainSyllables(rawText, pinyinFn = pinyin) {
+  if (pinyinFn === pinyin) ensureCustomPinyin();
   const text = normalizeNumbers(String(rawText || ''));
   return pinyinFn(text, { ...PINYIN_OPTIONS, toneSandhi: false })
     .filter(p => p.isZh)

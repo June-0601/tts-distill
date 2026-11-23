@@ -35,11 +35,13 @@ python3 - "$LANG_ID" "$OUT/$NAME.onnx.json" <<'PY'
 import json, sys
 lang_id, path = sys.argv[1], sys.argv[2]
 cfg = json.load(open(path, encoding="utf-8"))
-# 收紧蒸馏模型的随机时长与噪声尺度，减少气音底噪并让单读单词更稳
-cfg["inference"] = {"noise_scale": 0.5, "length_scale": 1.0, "noise_w": 0.6}
 if lang_id.startswith("zh"):
-    # 训练时按 text 读现成的 ID；导出后标回 pinyin，和 Chaowen / Xiao Ya 的配置一致
+    # 中文模型进一步收紧 noise_w 避免随机卡顿拖音；导出后标回 pinyin 与 Chaowen / Xiao Ya 一致
+    cfg["inference"] = {"noise_scale": 0.45, "length_scale": 0.96, "noise_w": 0.25}
     cfg["phoneme_type"] = "pinyin"
+else:
+    # 收紧蒸馏模型的随机时长与噪声尺度，减少气音底噪并让单读单词更稳
+    cfg["inference"] = {"noise_scale": 0.5, "length_scale": 1.0, "noise_w": 0.6}
 json.dump(cfg, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 PY
 echo "导出自 $CKPT"
