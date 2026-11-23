@@ -1,0 +1,74 @@
+{
+  "zf_032": {
+    "weights_orig_zf001": [
+      0.949,
+      0.051
+    ],
+    "final_loss": 4.8143,
+    "pt_bytes": 523746,
+    "bin_bytes": 522240
+  },
+  "zf_046": {
+    "weights_orig_zf001": [
+      0.863,
+      0.137
+    ],
+    "final_loss": 7.8486,
+    "pt_bytes": 523746,
+    "bin_bytes": 522240
+  },
+  "zf_021": {
+    "weights_orig_zf001": [
+      0.951,
+      0.049
+    ],
+    "final_loss": 5.7417,
+    "pt_bytes": 523746,
+    "bin_bytes": 522240
+  },
+  "zf_022": {
+    "weights_orig_zf001": [
+      0.865,
+      0.135
+    ],
+    "final_loss": 7.3248,
+    "pt_bytes": 523746,
+    "bin_bytes": 522240
+  },
+  "zf_023": {
+    "weights_orig_zf001": [
+      0.955,
+      0.045
+    ],
+    "final_loss": 4.9403,
+    "pt_bytes": 523746,
+    "bin_bytes": 522240
+  },
+  "zf_024": {
+    "weights_orig_zf001": [
+      0.871,
+      0.129
+    ],
+    "final_loss": 5.6398,
+    "pt_bytes": 523746,
+    "bin_bytes": 522240
+  },
+  "zf_059": {
+    "weights_orig_zf001": [
+      0.949,
+      0.051
+    ],
+    "final_loss": 5.8769,
+    "pt_bytes": 523746,
+    "bin_bytes": 522240
+  },
+  "zf_079": {
+    "weights_orig_zf001": [
+      0.859,
+      0.141
+    ],
+    "final_loss": 8.3224,
+    "pt_bytes": 523746,
+    "bin_bytes": 522240
+  }
+}
