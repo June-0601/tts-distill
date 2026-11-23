@@ -56,12 +56,13 @@ def phoneme_ids(lang: str, texts, config):
     if lang == "en":
         from piper.phoneme_ids import phonemes_to_ids
         from piper.phonemize_espeak import EspeakPhonemizer
+        from en_zh_g2p import _phonemize_en_chunk
 
         ph = EspeakPhonemizer()
         out = []
         for t in texts:
             ids = []
-            for sent in ph.phonemize(config["espeak"]["voice"], t):
+            for sent in _phonemize_en_chunk(ph, config["espeak"]["voice"], t):
                 ids += phonemes_to_ids(sent, id_map=config["phoneme_id_map"])
             out.append(ids)
         return out

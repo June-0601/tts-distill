@@ -13,6 +13,120 @@ export const ZH_PIPER_INFERENCE_DEFAULTS = Object.freeze({
   noiseW: 0.25,
 });
 
+export const EN_PIPER_INFERENCE_DEFAULTS = Object.freeze({
+  noiseScale: 0.5,
+  lengthScale: 1.0,
+  noiseW: 0.6,
+});
+
+const EN_AFFIX_PAREN_RE = /(?<=[A-Za-z])\(\s*(s|es|ies|ren|ed|ing)\s*\)/gi;
+
+/**
+ * 英文标点与括号停顿规整（供 Piper 英文/混排 espeak-ng 前端及 Kokoro 复用）：
+ * espeak-ng 默认会直接吞掉 '(' ')' '[' ']' 而不生成任何停顿音素；
+ * 将括号映射为 ',' 停顿，并在 '1996).' / 'Wait: (' / '(Note)' 处自动去重与收尾，
+ * 同时保留单词词尾变体如 author(s) 不被误拆成 "author, s"。
+ */
+export function normalizeEnPunctuation(rawText, { keepRoundBrackets = false } = {}) {
+  let s = String(rawText || '').replace(/\r\n?/g, '\n');
+  s = s.replace(/([A-Za-z0-9,;:\-"'])\n+(?=[A-Za-z0-9("'“])/g, '$1 ');
+  s = s.replace(/([.?!])\n+/g, '$1 ');
+  s = s.replace(/\n+/g, '. ');
+
+  const affixes = [];
+  s = s.replace(EN_AFFIX_PAREN_RE, m => {
+    const token = `\uE010${affixes.length}\uE011`;
+    affixes.push(m);
+    return token;
+  });
+
+  const openClass = keepRoundBrackets ? '\\[\\uFF08\\u3010' : '(\\[\\uFF08\\u3010';
+  const closeClass = keepRoundBrackets ? '\\]\\uFF09\\u3011' : ')\\]\\uFF09\\u3011';
+  const pauseSep = keepRoundBrackets ? ', ' : '; ';
+  s = s.replace(new RegExp(`\\s*([${openClass}])\\s*`, 'g'), (_, _br, offset, full) => {
+    const prev = full.slice(0, offset);
+    return (!prev.trim() || /[.?!,;:\-—(["'“‘]\s*$/.test(prev)) ? ' ' : pauseSep;
+  });
+  s = s.replace(new RegExp(`\\s*([${closeClass}])\\s*`, 'g'), (match, _br, offset, full) => {
+    const after = full.slice(offset + match.length);
+    return (!after.trim() || /^[.?!,;:)\]"'”’]/.test(after)) ? '' : pauseSep;
+  });
+
+  s = s.replace(/\s+([.?!,;:])/g, '$1');
+  s = s.replace(/[ \t]{2,}/g, ' ');
+  s = s.replace(/^[;,\s]+|[;,\s]+$/g, '');
+
+  if (affixes.length) {
+    s = s.replace(/\uE010(\d+)\uE011/g, (_, idx) => affixes[+idx]);
+  }
+  return s;
+}
+
+const ZH_DIGITS = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+
+export function intToZh(n) {
+  if (n === 0) return '零';
+  if (n < 0) return '负' + intToZh(-n);
+  if (n >= 100000000) {
+    const q = Math.floor(n / 100000000), r = n % 100000000;
+    return intToZh(q) + '亿' + (r ? (r < 10000000 ? '零' : '') + intToZh(r) : '');
+  }
+  if (n >= 10000) {
+    const q = Math.floor(n / 10000), r = n % 10000;
+    return intToZh(q) + '万' + (r ? (r < 1000 ? '零' : '') + intToZh(r) : '');
+  }
+  const units = ['', '十', '百', '千'];
+  const s = String(n);
+  let out = '';
+  let zero = false;
+  for (let i = 0; i < s.length; i++) {
+    const d = +s[i];
+    const pos = s.length - 1 - i;
+    if (d === 0) {
+      zero = true;
+    } else {
+      if (zero) {
+        out += '零';
+        zero = false;
+      }
+      if (!(d === 1 && pos === 1 && out === '')) out += ZH_DIGITS[d];
+      out += units[pos];
+    }
+  }
+  return out;
+}
+
+export function zhNumStr(numStr) {
+  if (numStr.includes('.')) {
+    const [a, b] = numStr.split('.');
+    return intToZh(+a) + '点' + b.split('').map(d => ZH_DIGITS[+d]).join('');
+  }
+  return numStr.length > 8 ? numStr.split('').map(d => ZH_DIGITS[+d]).join('') : intToZh(+numStr);
+}
+
+/** 将中文上下文中的日期、温度、百分数、分数、年份、负数与阿拉伯数字规范化为中文读法。 */
+export function normalizeZhNumbers(text) {
+  const s = String(text || '');
+  let res = s.replace(/\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b/g, (_, y, mo, d) => {
+    const yZh = y.split('').map(c => ZH_DIGITS[+c]).join('');
+    return `${yZh}年${intToZh(+mo)}月${intToZh(+d)}日`;
+  });
+  res = res.replace(/([-−])?(\d+(?:\.\d+)?)\s*(?:°\s*([CcFf])|([℃℉]))/g, (_, sign, num, degUnit, symUnit) => {
+    const unit = ((degUnit || '').toUpperCase() === 'F' || symUnit === '℉') ? '华氏度' : '摄氏度';
+    return (sign ? '零下' : '') + zhNumStr(num) + unit;
+  });
+  res = res.replace(/([-−])?(\d+(?:\.\d+)?)\s*[%％]/g, (_, sign, num) => {
+    return (sign ? '负' : '') + '百分之' + zhNumStr(num);
+  });
+  res = res.replace(/(?<![A-Za-z0-9./\-])(\d+)\s*\/\s*(\d+)(?![A-Za-z0-9./\-])/g, (_, num, den) => {
+    return `${zhNumStr(den)}分之${zhNumStr(num)}`;
+  });
+  res = res.replace(/\b(\d{4})(?=\s*年)/g, (_, y) => y.split('').map(d => ZH_DIGITS[+d]).join(''));
+  res = res.replace(/(?<![A-Za-z0-9.])([-−])(\d+(?:\.\d+)?)/g, (_, _sign, num) => '负' + zhNumStr(num));
+  res = res.replace(/\d+(\.\d+)?/g, m => zhNumStr(m));
+  return res;
+}
+
 const LINE_END_PUNCT_RE = /[。？！，、：；.?!,;:][”’"')）】》]*$/;
 
 /**
@@ -36,6 +150,8 @@ export function normalizeZhPunctuation(rawText, { keepDunhao = false } = {}) {
 
   s = s.replace(/…{2,}|\.{3,}/g, '，');
   s = s.replace(/[—\-]{2,}/g, '，');
+  // 括号（如「中文翻译（English Name）」）转成明确停顿边界，随后统一做邻近/首尾停顿归并
+  s = s.replace(/[（(【\[]/g, '，').replace(/[）)】\]]/g, '，');
   s = s.replace(/[，,]{2,}/g, '，');
 
   if (!keepDunhao) {
@@ -48,7 +164,7 @@ export function normalizeZhPunctuation(rawText, { keepDunhao = false } = {}) {
 
   s = s.replace(/([：:；;，,])\s*([：:；;，,]+)/g, '$1');
   s = s.replace(/([：:；;，,])\s*([。？！.?!])/g, '$2');
-  return s.trim();
+  return s.replace(/^[，,\s]+|[，,\s]+$/g, '').trim();
 }
 
 /**

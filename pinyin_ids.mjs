@@ -20,7 +20,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { customPinyin, pinyin } from 'pinyin-pro';
-import { normalizeZhPunctuation, splitZhClauses } from './zh_tts_runtime.mjs';
+import { normalizeZhNumbers, normalizeZhPunctuation, splitZhClauses } from './zh_tts_runtime.mjs';
 
 export { normalizeZhPunctuation, splitZhClauses };
 
@@ -342,43 +342,11 @@ function intToEn(n) {
   return String(n).split('').map(d => EN_ONES[+d]).join(' ');
 }
 
-function zhNumStr(numStr) {
-  if (numStr.includes('.')) {
-    const [a, b] = numStr.split('.');
-    return intToZh(+a) + '点' + b.split('').map(d => ZH_DIGITS[+d]).join('');
-  }
-  return numStr.length > 8 ? numStr.split('').map(d => ZH_DIGITS[+d]).join('') : intToZh(+numStr);
-}
-
 /** 将文本中的阿拉伯数字、温度、百分数、分数、负号按语境转为中文数字或英文单词。 */
 export function normalizeNumbers(text) {
   const s = String(text || '');
-  const hasZh = /[一-鿿°℃％%]/.test(s);
-  if (hasZh) {
-    // 0) 日期格式 YYYY-MM-DD / YYYY/MM/DD -> 二〇二六年十一月二十二日
-    let res = s.replace(/\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b/g, (_, y, mo, d) => {
-      const yZh = y.split('').map(c => ZH_DIGITS[+c]).join('');
-      return `${yZh}年${intToZh(+mo)}月${intToZh(+d)}日`;
-    });
-    // 1) 温度：-5°C / 26℃ -> 零下五摄氏度 / 二十六摄氏度
-    res = res.replace(/([-−])?(\d+(?:\.\d+)?)\s*(?:°\s*([CcFf])|([℃℉]))/g, (_, sign, num, degUnit, symUnit) => {
-      const unit = ((degUnit || '').toUpperCase() === 'F' || symUnit === '℉') ? '华氏度' : '摄氏度';
-      return (sign ? '零下' : '') + zhNumStr(num) + unit;
-    });
-    // 2) 百分数：85% / -12.5％ -> 百分之八十五 / 负百分之十二点五
-    res = res.replace(/([-−])?(\d+(?:\.\d+)?)\s*[%％]/g, (_, sign, num) => {
-      return (sign ? '负' : '') + '百分之' + zhNumStr(num);
-    });
-    // 3) 中文上下文常见分数（避开 URL/日期格式 2026/11/22）：1/3 -> 三分之一
-    res = res.replace(/(?<![A-Za-z0-9./\-])(\d+)\s*\/\s*(\d+)(?![A-Za-z0-9./\-])/g, (_, num, den) => {
-      return `${zhNumStr(den)}分之${zhNumStr(num)}`;
-    });
-    // 4) 年份：1998年 -> 一九九八年
-    res = res.replace(/\b(\d{4})(?=\s*年)/g, (_, y) => y.split('').map(d => ZH_DIGITS[+d]).join(''));
-    // 5) 负数与常规整数/小数
-    res = res.replace(/(?<![A-Za-z0-9.])([-−])(\d+(?:\.\d+)?)/g, (_, _sign, num) => '负' + zhNumStr(num));
-    res = res.replace(/\d+(\.\d+)?/g, m => zhNumStr(m));
-    return res;
+  if (/[一-鿿°℃％%]/.test(s)) {
+    return normalizeZhNumbers(s);
   }
   return s.replace(/\d+(\.\d+)?/g, m => {
     if (m.includes('.')) {

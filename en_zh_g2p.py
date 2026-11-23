@@ -31,11 +31,19 @@ ZH_PUNCT_MAP = {
     "；": ";",
     "—": ",",
     "…": ",",
+    "（": ",",
+    "）": ",",
+    "【": ",",
+    "】": ",",
+    "(": ",",
+    ")": ",",
+    "[": ",",
+    "]": ",",
     "“": '"',
     "”": '"',
 }
-ZH_TRIGGER_RE = re.compile(r"[一-鿿。？！、，：；—…]")
-ZH_PUNCT_SPLIT_RE = re.compile(r"([。？！、，：；—…“”]+)")
+ZH_TRIGGER_RE = re.compile(r"[一-鿿。？！、，：；—…（）【】\[\]]")
+ZH_PUNCT_SPLIT_RE = re.compile(r"([。？！、，：；—…（）()【】\[\]“”]+)")
 PAUSE_PUNCTS = {",", ":", ";"}
 
 # 明确表示“字母/序号 A”的语境（避免 espeak 在 Option A is ... / A or B / A. First 等处误弱读成冠词 ɐ）
@@ -48,21 +56,57 @@ _LETTER_A_LABEL = (
 _LETTER_A_RE = re.compile(
     rf"(?i)(?<![A-Za-z.])({_LETTER_A_LABEL}\s+)(?-i:A)(?![A-Za-z])"
     rf"|(?<![A-Za-z.])(A)(?=\s+(?:or|and|vs\.?|versus|to)\s+B(?![A-Za-z]))"
+    rf"|(?<=[(\[（【])(A)(?=[)\]）】])"
     rf"|(?:^|(?<=\n))(A)(?=\.\s+[A-Z])"
 )
 _LETTER_A_SENTINEL = "\ue000LETTER_A\ue001"
+_EN_AFFIX_PAREN_RE = re.compile(r"(?<=[A-Za-z])\(\s*(s|es|ies|ren|ed|ing)\s*\)", re.I)
 
 
-def _normalize_en_a_text(text: str) -> str:
-    """规整英文中的字母 A 标记，并将内部异常换行折叠为空格，防止孤立的 'A' 被误读成字母 /eɪ/。"""
-    def _repl(m: re.Match) -> str:
+def normalize_en_text(text: str) -> str:
+    """规整英文换行、字母/序号 A 标记与括号停顿（espeak-ng 会吞掉 '(' ')' '[' ']' 而不发停顿）。"""
+    def _repl_a(m: re.Match) -> str:
         if m.group(1) is not None:
             return f"{m.group(1)}{_LETTER_A_SENTINEL}"
         return _LETTER_A_SENTINEL
 
-    s = _LETTER_A_RE.sub(_repl, text)
-    s = re.sub(r"[ \t]*\r?\n[ \t]*", " ", s)
+    s = re.sub(r"\r\n?", "\n", str(text or ""))
+    s = _LETTER_A_RE.sub(_repl_a, s)
+    s = re.sub(r"([A-Za-z0-9,;:\-\"'\ue001])\n+(?=[A-Za-z0-9(\"'“\ue000])", r"\1 ", s)
+    s = re.sub(r"([.?!])\n+", r"\1 ", s)
+    s = re.sub(r"\n+", ". ", s)
+
+    affixes: list[str] = []
+
+    def _save_affix(m: re.Match) -> str:
+        tok = f"\ue010{len(affixes)}\ue011"
+        affixes.append(m.group(0))
+        return tok
+
+    s = _EN_AFFIX_PAREN_RE.sub(_save_affix, s)
+
+    def _rep_open(m: re.Match) -> str:
+        prev = s[: m.start()]
+        return " " if (not prev.strip() or re.search(r'[.?!,;:\-—(\["\'“‘]\s*$', prev)) else "; "
+
+    s = re.sub(r"\s*([(\[（【])\s*", _rep_open, s)
+
+    def _rep_close(m: re.Match) -> str:
+        after = s[m.end() :]
+        return "" if (not after.strip() or re.match(r'^[.?!,;:)\]"\'”’]', after)) else "; "
+
+    s = re.sub(r"\s*([)\]）】])\s*", _rep_close, s)
+    s = re.sub(r"\s+([.?!,;:])", r"\1", s)
+    s = re.sub(r"[ \t]{2,}", " ", s)
+    s = re.sub(r"^[;,\s]+|[;,\s]+$", "", s)
+
+    if affixes:
+        s = re.sub(r"\ue010(\d+)\ue011", lambda m: affixes[int(m.group(1))], s)
     return s
+
+
+def _normalize_en_a_text(text: str) -> str:
+    return normalize_en_text(text)
 
 
 def _phonemize_en_chunk(ep, espeak_voice: str, text: str) -> list[list[str]]:
@@ -233,6 +277,9 @@ def texts_to_en_zh_ids(
                         for ch in sub:
                             mapped = ZH_PUNCT_MAP.get(ch)
                             if mapped and mapped in id_map:
+                                # 跳过句首多余括号停顿以及连续重复的停顿标点
+                                if mapped in PAUSE_PUNCTS and (not tokens or last_kind in ("space", "punct")):
+                                    continue
                                 tokens.append(mapped)
                                 if mapped in PAUSE_PUNCTS:
                                     tokens.append(" ")
@@ -259,8 +306,8 @@ def texts_to_en_zh_ids(
                                 "space" if flat_en[-1] == " " else "en"
                             )
 
-        # 去掉末尾多余空格，避免 EOS 前多出停顿占位
-        while tokens and tokens[-1] == " ":
+        # 去掉末尾多余空格与孤立末尾括号逗号，避免 EOS 前无意义停顿
+        while tokens and tokens[-1] in (" ", ","):
             tokens.pop()
         ids = phonemes_to_ids(tokens, id_map=id_map)
         results[uid] = (ids, bad)
