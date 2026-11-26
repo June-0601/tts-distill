@@ -2,6 +2,44 @@
 
 本仓库已将全部训练脚本、双语 G2P 前端参考实现与 `.onnx.json` 配置提交至 `main`，并将 3 套导出模型（每个约 73.5 MiB）发布到 GitHub Release **`v1.0-models`**（避免大二进制膨胀 Git 历史，也无需安装 `git-lfs`）。
 
+> **2026-11 新增：中文 v2 模型 `zh_CN-kokoro_zh_v2-medium`（Release `v2.0-models`）**，专为长文本电子书朗读重训，推荐替换旧 `zh_multi`。接入方法见下方「零、中文 v2」。
+
+---
+
+## 零、中文 v2（`zh_CN-kokoro_zh_v2-medium.onnx`，推荐）
+
+**为什么重训**：旧 `zh_multi` 的老师是 Kokoro 中文本身，Kokoro 单句正常、长文本语气和断句奇怪，学生原样继承。v2 保留 Kokoro 的 8 个女声音色（用 Kokoro 原声做零样本克隆参考），但朗读交给更会“读书”的老师，按试听逐个音色选定：
+
+| 音色 | sid | 老师引擎 |
+|---|---|---|
+| zf_032 | 0 | Qwen3-TTS 1.7B |
+| zf_046 | 1 | Fun-CosyVoice3 0.5B |
+| zf_021 | 2 | Fun-CosyVoice3 0.5B |
+| zf_022 / zf_023 / zf_024 | 3 / 4 / 5 | Qwen3-TTS 1.7B |
+| zf_059 | 6 | Fun-CosyVoice3 0.5B |
+| zf_079 | 7 | Qwen3-TTS 1.7B |
+
+语料：3 本中文书的 15–110 字整句块 + 旧语料里的单词/释义/中英混排（共 8118 条、约 20 小时，经 Whisper 回听与声纹把关），从 `zh_multi` 热启动训练 170 轮（选 epoch 169）。说话人编号与 `zh_multi` 完全相同，音色选择 UI 不用改。
+
+**网页 Worker 接入（3 处改动，均已在仓库参考实现里）**：
+1. **词边界**：`.onnx.json` 里有 `"zh_frontend": {"word_boundary": true}`。看到它就用 `pinyinTokens(text, pinyin, { ...PINYIN_OPTIONS, wordBoundary: true })`（`pinyin_ids.mjs`），前端用 `Intl.Segmenter('zh', {granularity: 'word'})` 分词，在词与词之间插 `#`（ID `116`）。模型就是带 `#` 训练的，不加会读得发紧、断句乱。Safari 14.1+ / Chrome 87+ / Node 16+ 都自带 `Intl.Segmenter`，零依赖。
+2. **分句更长**：`splitZhClauses(text, 100)`（旧模型是 48）。v2 在整句上学到了句内语气，切太碎会丢掉。
+3. **静音压缩放轻**：`compressInternalSilence(pcm, 22050, { maxPauseMs: 450, targetPauseMs: 380, minSilenceMs: 200, tailMs: 120 })`。v2 的句内停顿是自然换气（中位约 0.3s），旧的 200→180ms 压缩会把节奏压平。
+
+以上三项可一次取到：
+```js
+import { pinyin } from 'pinyin-pro';
+import { PINYIN_OPTIONS, pinyinTokens, tokensToIds } from './pinyin_ids.mjs';
+import { zhV2Settings, splitZhClauses, compressInternalSilence } from './zh_tts_runtime.mjs';
+const s = zhV2Settings(modelConfig);            // 旧 zh_multi 自动回落到原行为
+for (const clause of splitZhClauses(text, s.maxClauseChars)) {
+  const ids = tokensToIds(pinyinTokens(clause, pinyin, { ...PINYIN_OPTIONS, wordBoundary: s.wordBoundary }));
+  const pcm = runPiper(ids, sid);               // inference 参数照旧读 .onnx.json
+  play(compressInternalSilence(pcm, 22050, s.silence));
+}
+```
+推理参数仍为 `{"noise_scale": 0.45, "length_scale": 0.96, "noise_w": 0.25}`，`sample_rate = 22050`，需传 `sid`。
+
 ---
 
 ## 一、在 Mac 上拉取全部模型
@@ -11,7 +49,7 @@ git pull origin main
 bash download_models.sh
 ```
 
-脚本会将以下 6 个文件下载到 `models/` 并自动完成 SHA256 校验（也可直接在 [Releases `v1.0-models`](https://github.com/June-0601/tts-distill/releases/tag/v1.0-models) 页面手动下载）：
+脚本会将以下 8 个文件（含 v2）下载到 `models/` 并自动完成 SHA256 校验（也可直接在 [Releases `v1.0-models`](https://github.com/June-0601/tts-distill/releases/tag/v1.0-models) 页面手动下载）：
 
 | 模型文件 | 大小 | 定位 | `espeak.voice` | `phoneme_type` | `speaker_id_map` |
 |---|---|---|---|---|---|

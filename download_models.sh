@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# 在 Mac 上一键从 GitHub Release (v1.0-models) 下载 3 套蒸馏好的 ONNX 模型到 models/ 并校验 SHA256。
+# 在 Mac 上一键从 GitHub Release 下载蒸馏好的 ONNX 模型到 models/ 并校验 SHA256。
+# v1.0-models：英文混合 ×2 + 旧中文 zh_multi；v2.0-models：新中文 zh_v2（CosyVoice3 / Qwen3-TTS 老师，长文本朗读）。
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="$HERE/models"
-TAG="${TAG:-v1.0-models}"
-BASE_URL="https://github.com/June-0601/tts-distill/releases/download/${TAG}"
+REPO_URL="https://github.com/June-0601/tts-distill/releases/download"
 
 mkdir -p "$OUT"
 
@@ -16,6 +16,8 @@ FILES=(
   "en_GB-kokoro_uk_zh_mix-medium.onnx.json"
   "zh_CN-kokoro_zh_multi-medium.onnx"
   "zh_CN-kokoro_zh_multi-medium.onnx.json"
+  "zh_CN-kokoro_zh_v2-medium.onnx"
+  "zh_CN-kokoro_zh_v2-medium.onnx.json"
 )
 
 for f in "${FILES[@]}"; do
@@ -24,8 +26,12 @@ for f in "${FILES[@]}"; do
     echo ">>> 保留仓库内最新的 $f"
     continue
   fi
-  echo ">>> 下载 $f ..."
-  curl -fL --retry 3 --progress-bar -o "$OUT/$f" "$BASE_URL/$f"
+  case "$f" in
+    zh_CN-kokoro_zh_v2-*) TAG=v2.0-models ;;
+    *) TAG=v1.0-models ;;
+  esac
+  echo ">>> 下载 $f（$TAG）..."
+  curl -fL --retry 3 --progress-bar -o "$OUT/$f" "$REPO_URL/$TAG/$f"
 done
 
 echo ">>> 校验 SHA256 ..."

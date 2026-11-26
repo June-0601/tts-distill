@@ -20,6 +20,7 @@ case "$LANG_ID" in
   en_bf_*) VOICE="${LANG_ID#en_}"; NAME="en_GB-kokoro_${VOICE}-medium" ;;
   zh) NAME=zh_CN-kokoro_zf001-medium ;;
   zh_multi) NAME=zh_CN-kokoro_zh_multi-medium ;;
+  zh_v2) NAME=zh_CN-kokoro_zh_v2-medium ;;
   zh_zf_*) VOICE="${LANG_ID#zh_}"; NAME="zh_CN-kokoro_${VOICE}-medium" ;;
   *) echo "语言只能是 en、en_us_multi、en_uk_multi、en_af_xxx、en_bf_xxx、zh、zh_multi 或 zh_zf_xxx"; exit 2 ;;
 esac
@@ -39,6 +40,9 @@ if lang_id.startswith("zh"):
     # 中文模型进一步收紧 noise_w 避免随机卡顿拖音；导出后标回 pinyin 与 Chaowen / Xiao Ya 一致
     cfg["inference"] = {"noise_scale": 0.45, "length_scale": 0.96, "noise_w": 0.25}
     cfg["phoneme_type"] = "pinyin"
+    if lang_id == "zh_v2":
+        # 网页前端据此打开 pinyinTokens(..., {wordBoundary: true})，插入中文词边界 #（ID 116）
+        cfg["zh_frontend"] = {"word_boundary": True, "segmenter": "Intl.Segmenter(zh, word)"}
 else:
     # 收紧蒸馏模型的随机时长与噪声尺度，减少气音底噪并让单读单词更稳
     cfg["inference"] = {"noise_scale": 0.5, "length_scale": 1.0, "noise_w": 0.6}

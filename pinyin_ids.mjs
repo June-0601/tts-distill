@@ -118,7 +118,20 @@ export const PHONEME_TO_ID = {
   // 英文重音 (112..114) 与词间连读边界 (115)
   "'0": [112], "'1": [113], "'2": [114],
   '@sp': [115],
+  // 中文词边界 (116)：只在 options.wordBoundary=true 时插入（v2 模型），告诉模型哪些字组成一个词，
+  // 不加停顿（训练音频里词间多数没有静音，模型会学到近零时长，只当韵律上下文用）。
+  '#': [116],
 };
+
+// 中文分词：用 JS 内置 Intl.Segmenter（ICU 词典，浏览器 / iOS Safari / Node 都自带，网页端零依赖）。
+let _segmenter = null;
+function zhWordStarts(text) {
+  const starts = new Set();
+  if (typeof Intl === 'undefined' || typeof Intl.Segmenter !== 'function') return starts;
+  _segmenter ||= new Intl.Segmenter('zh', { granularity: 'word' });
+  for (const s of _segmenter.segment(text)) starts.add(s.index);
+  return starts;
+}
 
 const PUNCT = new Set(['。', '.', '？', '?', '！', '!', '—', '…', '、', '，', ',', '：', ':', '；', ';']);
 const GROUP_END = new Set(['1', '2', '3', '4', '5', "'0", "'1", "'2", '@sp', ...PUNCT, ' ']);
@@ -411,12 +424,18 @@ export function pinyinTokens(rawText, pinyinFn = pinyin, options = PINYIN_OPTION
     flushPunct(seg.slice(lastIdx));
   };
 
-  for (const part of pinyinFn(text, options)) {
+  const wordStarts = options?.wordBoundary ? zhWordStarts(text) : null;
+  const { wordBoundary: _wb, keepDunhao: _kd, ...pinyinOptions } = options || {};
+  let pos = 0;
+  for (const part of pinyinFn(text, pinyinOptions)) {
+    const here = pos;
+    pos += (part.origin || '').length;
     if (part.isZh) {
       flushNonZh();
       const split = splitSyllable(part.pinyin);
       if (!split) { bad.push(`${part.origin}:${part.pinyin}`); continue; }
       if (prevKind === 'en') tokens.push('@sp');
+      else if (wordStarts && prevKind === 'zh' && wordStarts.has(here)) tokens.push('#');
       tokens.push(split[0], split[1], String(part.num || 5));
       prevKind = 'zh';
     } else {
@@ -456,15 +475,18 @@ export function plainSyllables(rawText, pinyinFn = pinyin) {
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop())) {
-  const [input, output] = process.argv.slice(2);
+  const args = process.argv.slice(2);
+  const wordBoundary = args.includes('--word-boundary');  // v2 模型：插入中文词边界 #
+  const [input, output] = args.filter(a => !a.startsWith('--'));
   if (!input || !output) {
-    console.error('用法：node pinyin_ids.mjs <输入.tsv> <输出.jsonl>');
+    console.error('用法：node pinyin_ids.mjs [--word-boundary] <输入.tsv> <输出.jsonl>');
     process.exit(2);
   }
+  const opts = wordBoundary ? { ...PINYIN_OPTIONS, wordBoundary: true } : PINYIN_OPTIONS;
   const lines = readFileSync(input, 'utf8').split('\n').filter(Boolean);
   const out = lines.map(line => {
     const [id, , text] = line.split('\t');
-    const { tokens, bad } = pinyinTokens(text);
+    const { tokens, bad } = pinyinTokens(text, pinyin, opts);
     return JSON.stringify({ id, tokens, ids: tokensToIds(tokens), bad, plain: plainSyllables(text) });
   });
   writeFileSync(output, out.join('\n') + '\n');

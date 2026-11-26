@@ -24,7 +24,7 @@ BATCH="${BATCH:-16}"
 WORKERS="${WORKERS:-6}"
 if [ -z "${PRECISION:-}" ]; then
   case "$LANG_ID" in
-    *_multi) PRECISION=bf16-mixed ;;
+    *_multi|zh_v2) PRECISION=bf16-mixed ;;
     *) PRECISION=32 ;;
   esac
 fi
@@ -119,6 +119,23 @@ case "$LANG_ID" in
     NUM_SPEAKERS="${NUM_SPEAKERS:-8}"
     EXTRA=(--model.num_speakers "$NUM_SPEAKERS" --data.espeak_voice cmn --data.phoneme_type text
            --data.dataset_type phoneme_ids --data.phonemes_path "$HERE/corpus/zh_phonemes.json"
+           --model.use_mrd true)
+    ;;
+  zh_v2)
+    # v2：音色来自 Kokoro，朗读由试听选定的老师（CosyVoice3 / Qwen3-TTS）完成；电子书句块语料；
+    # 前端带中文词边界 #（pinyin_ids.mjs --word-boundary，ID 116）。说话人编号沿用 zh_multi。
+    # 默认从 zh_multi 的 last.ckpt 热启动（音色已学好，只需重学韵律），没有就从 Chaowen 底模开始。
+    NAME=zh_CN-kokoro_zh_v2-medium
+    if [ -z "${BASE_CKPT:-}" ]; then
+      BASE_CKPT="$(ls -t "$WORK"/runs/zh_multi/lightning_logs/version_*/checkpoints/last.ckpt 2>/dev/null | head -1 || true)"
+      [ -n "$BASE_CKPT" ] || BASE_CKPT="$WORK/base/chaowen-medium.ckpt"
+    fi
+    AUDIO_DIR="$WORK/zh_v2/wavs"
+    META="$WORK/zh_v2/metadata.csv"
+    CACHE_DIR="$WORK/zh_v2/cache"
+    NUM_SPEAKERS="${NUM_SPEAKERS:-8}"
+    EXTRA=(--model.num_speakers "$NUM_SPEAKERS" --data.espeak_voice cmn --data.phoneme_type text
+           --data.dataset_type phoneme_ids --data.phonemes_path "$HERE/corpus/zh_phonemes_v2.json"
            --model.use_mrd true)
     ;;
   zh_zf_*)

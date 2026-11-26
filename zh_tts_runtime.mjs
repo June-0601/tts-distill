@@ -1,6 +1,6 @@
 /**
  * Pure ESM (browser Web Worker & Node compatible, zero external dependencies) runtime helpers
- * for zh_CN-kokoro_zh_multi-medium.onnx:
+ * for zh_CN-kokoro_zh_multi-medium.onnx and zh_CN-kokoro_zh_v2-medium.onnx (see zhV2Settings):
  *  - ZH_PIPER_INFERENCE_DEFAULTS: tightened length_scale & noise_w to curb random phoneme stalling
  *  - normalizeZhPunctuation: preserves line breaks, folds repeated punctuation, lightens dunhao
  *  - splitZhClauses: splits long Chinese paragraphs cleanly along sentences / balanced clauses
@@ -12,6 +12,28 @@ export const ZH_PIPER_INFERENCE_DEFAULTS = Object.freeze({
   lengthScale: 0.96,
   noiseW: 0.25,
 });
+
+/**
+ * zh_CN-kokoro_zh_v2-medium（v2：CosyVoice3 / Qwen3-TTS 老师 + 电子书句块语料 + 中文词边界）。
+ * 用 zhV2Settings(config) 按模型配置取前端参数：
+ *  - wordBoundary：传给 pinyinTokens(text, { wordBoundary: true })，在词与词之间插 '#'（ID 116，
+ *    分词用浏览器/Node 自带的 Intl.Segmenter('zh', {granularity: 'word'})）；不传则模型会读得发紧、断句乱；
+ *  - maxClauseChars：splitZhClauses 的分句上限。v2 用 15–110 字的整句块训练，切太碎反而丢掉它学到的句内语气；
+ *  - silence：compressInternalSilence 的参数。v2 句内停顿是老师的自然换气（中位约 0.3s），
+ *    只压真正的死停顿（>450ms → 380ms），不要用旧模型 200→180ms 的激进压缩。
+ */
+export const ZH_V2_RUNTIME = Object.freeze({
+  maxClauseChars: 100,
+  silence: Object.freeze({ maxPauseMs: 450, targetPauseMs: 380, minSilenceMs: 200, tailMs: 120 }),
+});
+
+export function zhV2Settings(modelConfig) {
+  const fe = modelConfig?.zh_frontend;
+  if (!fe?.word_boundary) {
+    return { wordBoundary: false, maxClauseChars: 48, silence: {} };  // 旧 zh_multi：保持原行为
+  }
+  return { wordBoundary: true, maxClauseChars: ZH_V2_RUNTIME.maxClauseChars, silence: { ...ZH_V2_RUNTIME.silence } };
+}
 
 export const EN_PIPER_INFERENCE_DEFAULTS = Object.freeze({
   noiseScale: 0.5,
